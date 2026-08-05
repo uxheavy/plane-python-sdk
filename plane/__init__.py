@@ -34,6 +34,7 @@ from .client import (
     PlaneClient,
 )
 from .config import Configuration
+from .api.base_resource import GatewayTransport
 from .errors.errors import ConfigurationError, HttpError, PlaneError
 from .models.project_templates import (
     CreatePageTemplate,
@@ -59,6 +60,7 @@ __all__ = [
     "PlaneClient",
     "OAuthClient",
     "Configuration",
+    "GatewayTransport",
     "AgentRuns",
     "WorkItems",
     "WorkItemTypes",

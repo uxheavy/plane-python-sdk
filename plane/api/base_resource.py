@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Protocol
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -7,6 +7,25 @@ from urllib3.util.retry import Retry
 
 from ..config import Configuration
 from ..errors.errors import HttpError
+
+
+class GatewayTransport(Protocol):
+    """Optional request transport used by compatibility adapters.
+
+    The SDK keeps its existing REST behavior unless a caller explicitly
+    supplies this transport.  A transport receives the same normalized
+    endpoint, payload, and query parameters that the REST client would send;
+    it is responsible for preserving the SDK response shape.
+    """
+
+    def request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        data: Mapping[str, Any] | list[Any] | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> Any: ...
 
 
 class BaseResource:
@@ -30,6 +49,8 @@ class BaseResource:
 
     # HTTP methods
     def _get(self, endpoint: str, params: Mapping[str, Any] | None = None) -> Any:
+        if self.config.gateway_transport is not None:
+            return self.config.gateway_transport.request("GET", self._transport_endpoint(endpoint), params=params)
         url = self._build_url(endpoint)
         response = self.session.get(
             url, headers=self._headers(), params=params, timeout=self.config.timeout
@@ -42,6 +63,10 @@ class BaseResource:
         data: Mapping[str, Any] | list[Any] | None = None,
         params: Mapping[str, Any] | None = None,
     ) -> Any:
+        if self.config.gateway_transport is not None:
+            return self.config.gateway_transport.request(
+                "POST", self._transport_endpoint(endpoint), data=data, params=params
+            )
         url = self._build_url(endpoint)
         response = self.session.post(
             url,
@@ -53,6 +78,8 @@ class BaseResource:
         return self._handle_response(response)
 
     def _put(self, endpoint: str, data: Mapping[str, Any] | None = None) -> Any:
+        if self.config.gateway_transport is not None:
+            return self.config.gateway_transport.request("PUT", self._transport_endpoint(endpoint), data=data)
         url = self._build_url(endpoint)
         response = self.session.put(
             url, headers=self._headers(), json=data, timeout=self.config.timeout
@@ -60,6 +87,8 @@ class BaseResource:
         return self._handle_response(response)
 
     def _patch(self, endpoint: str, data: Mapping[str, Any] | None = None) -> Any:
+        if self.config.gateway_transport is not None:
+            return self.config.gateway_transport.request("PATCH", self._transport_endpoint(endpoint), data=data)
         url = self._build_url(endpoint)
         response = self.session.patch(
             url, headers=self._headers(), json=data, timeout=self.config.timeout
@@ -72,6 +101,11 @@ class BaseResource:
         data: Mapping[str, Any] | None = None,
         params: Mapping[str, Any] | None = None,
     ) -> None:
+        if self.config.gateway_transport is not None:
+            self.config.gateway_transport.request(
+                "DELETE", self._transport_endpoint(endpoint), data=data, params=params
+            )
+            return
         url = self._build_url(endpoint)
         response = self.session.delete(
             url,
@@ -87,6 +121,13 @@ class BaseResource:
         endpoint = endpoint.strip("/")
         base = f"{self.config.base_path.rstrip('/')}{self.base_path}/"
         return f"{base}{endpoint}/" if endpoint else base
+
+    def _transport_endpoint(self, endpoint: str) -> str:
+        """Return the full SDK-relative path for an optional transport."""
+
+        base = self.base_path.strip("/")
+        endpoint = endpoint.strip("/")
+        return f"/{base}/{endpoint}" if endpoint else f"/{base}"
 
     def _headers(self) -> dict[str, str]:
         headers: dict[str, str] = {"Content-Type": "application/json"}

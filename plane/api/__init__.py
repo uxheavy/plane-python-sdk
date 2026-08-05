@@ -1,4 +1,4 @@
-from .base_resource import BaseResource
+from .base_resource import BaseResource, GatewayTransport
 from .customers import Customers
 from .initiatives import Initiatives
 from .stickies import Stickies
@@ -8,6 +8,7 @@ from .work_items import WorkItems
 
 __all__ = [
     "BaseResource",
+    "GatewayTransport",
     "WorkItems",
     "WorkItemProperties",
     "Customers",

@@ -175,9 +175,11 @@ class WorkItemAttachments(BaseResource):
         Returns:
             Presigned S3 URL (time-limited, typically ~1 hour)
         """
-        url = self._build_url(
-            f"{workspace_slug}/projects/{project_id}/work-items/{work_item_id}/attachments/{attachment_id}"
-        )
+        endpoint = f"{workspace_slug}/projects/{project_id}/work-items/{work_item_id}/attachments/{attachment_id}"
+        special_request = getattr(self.config.gateway_transport, "request_special", None)
+        if special_request is not None:
+            return special_request("attachment_download_url", self._transport_endpoint(endpoint))
+        url = self._build_url(endpoint)
         resp = self.session.get(url, headers=self._headers(), allow_redirects=False, timeout=self.config.timeout)
         if resp.status_code in (301, 302, 303, 307, 308):
             location = resp.headers.get("Location")

@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any
 
 from .errors import ConfigurationError
 
@@ -23,6 +24,7 @@ class Configuration:
         access_token: str | None = None,
         timeout: float | tuple[float, float] | None = 30.0,
         retry: RetryConfig | None = None,
+        gateway_transport: Any | None = None,
     ) -> None:
         if not api_key and not access_token:
             raise ConfigurationError(
@@ -38,3 +40,4 @@ class Configuration:
         self.access_token = access_token
         self.timeout = timeout
         self.retry = retry
+        self.gateway_transport = gateway_transport
