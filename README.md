@@ -1221,7 +1221,8 @@ plane-python-sdk/
 
 ## License
 
-MIT License - see LICENSE file for details.
+This modified fork is distributed under the [MIT License](LICENSE). See
+[NOTICE](NOTICE) for attribution.
 
 ## Support
 
