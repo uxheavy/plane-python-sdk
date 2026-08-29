@@ -92,9 +92,11 @@ class RepositoryPolicyTests(unittest.TestCase):
             root = Path(directory)
             models = root / "plane" / "models"
             models.mkdir(parents=True)
-            (root / "plane" / "__init__.py").write_text("", encoding="utf-8")
-            (root / "plane" / "facade.py").write_text(
+            (root / "plane" / "__init__.py").write_text(
                 "from .client import PlaneClient\n", encoding="utf-8"
+            )
+            (root / "plane" / "facade.py").write_text(
+                "from plane import PlaneClient\n", encoding="utf-8"
             )
             (models / "leak.py").write_text(
                 "from plane.facade import PlaneClient\n", encoding="utf-8"
@@ -193,6 +195,8 @@ class RepositoryPolicyTests(unittest.TestCase):
             "plane/resources/qualified.py": (
                 "import plane.api.projects as resources\n"
                 "class QualifiedProjects(resources.Projects):\n    pass\n"
+                "Resource = resources.Projects\n"
+                "class AssignedProjects(Resource):\n    pass\n"
             ),
             "plane/resources/facade.py": (
                 "from plane.facade import Resource\nclass FacadeProjects(Resource):\n    pass\n"
@@ -200,7 +204,9 @@ class RepositoryPolicyTests(unittest.TestCase):
             "plane/api/override.py": (
                 "class Projects(BaseResource):\n"
                 "    def _handle_response(self, response):\n        return response\n"
+                "    def _get(self, endpoint):\n        return endpoint\n"
             ),
+            "plane/api/__init__.py": "class Unsafe:\n    pass\n",
             "plane/contracts/work_items.py": (
                 "import pydantic\nfrom pydantic import BaseModel, RootModel\n"
                 "from pydantic.v1 import BaseModel as V1BaseModel\n"
@@ -244,6 +250,7 @@ class RepositoryPolicyTests(unittest.TestCase):
                 "SDK006",
                 "SDK006",
                 "SDK010",
+                "SDK005",
                 "SDK007",
                 "SDK007",
                 "SDK008",

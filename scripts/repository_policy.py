@@ -30,7 +30,16 @@ TRANSPORT_ALLOWLIST = {
     "plane/api/work_items/attachments.py",
     "plane/client/oauth_client.py",
 }
-TRANSPORT_HELPERS = {"_build_url", "_handle_response", "_headers"}
+TRANSPORT_HELPERS = {
+    "_build_url",
+    "_delete",
+    "_get",
+    "_handle_response",
+    "_headers",
+    "_patch",
+    "_post",
+    "_put",
+}
 OAUTH_MODEL_EXCEPTIONS = {
     "OAuthAuthorizationParams",
     "OAuthClientCredentialsParams",
@@ -108,6 +117,11 @@ def import_bindings(
                 if module == "plane" and root_exports:
                     target = root_exports.get(alias.name, target)
                 bindings[alias.asname or alias.name] = target
+        elif isinstance(node, ast.Assign) and isinstance(node.value, (ast.Name, ast.Attribute)):
+            target = qualified_name(node.value, bindings, root_exports)
+            bindings.update(
+                {assigned.id: target for assigned in node.targets if isinstance(assigned, ast.Name)}
+            )
     return bindings
 
 
@@ -200,6 +214,15 @@ def implementation_modules(root: Path) -> set[str]:
         package = module if path.name == "__init__.py" else module.rpartition(".")[0]
         imports_by_module[module] = imported_modules(path.read_text(encoding="utf-8"), package)
 
+    init = root / "plane" / "__init__.py"
+    root_implementations = {
+        f"plane.{name}"
+        for name, target in import_bindings(
+            init.read_text(encoding="utf-8") if init.is_file() else "", "plane"
+        ).items()
+        if target.startswith(("plane.api.", "plane.client."))
+    }
+
     implementation = {"plane.api", "plane.client"} | {
         module for module in imports_by_module if module.startswith(("plane.api.", "plane.client."))
     }
@@ -208,7 +231,10 @@ def implementation_modules(root: Path) -> set[str]:
             module
             for module, imports in imports_by_module.items()
             if module != "plane"
-            and any(imports_package(imports, owner) for owner in implementation)
+            and (
+                any(imports_package(imports, owner) for owner in implementation)
+                or not imports.isdisjoint(root_implementations)
+            )
         }
         expanded = implementation | found
         if expanded == implementation:
@@ -397,10 +423,7 @@ def evaluate_changes(
                         f"transport helper override must stay in BaseResource: {names}",
                     )
                 )
-            if not path.startswith("plane/api/") or Path(path).name in {
-                "__init__.py",
-                "base_resource.py",
-            }:
+            if not path.startswith("plane/api/") or Path(path).name == "base_resource.py":
                 continue
             invalid = [
                 node.name
