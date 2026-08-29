@@ -87,6 +87,17 @@ class RepositoryPolicyTests(unittest.TestCase):
             )
             self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
 
+    def test_rejects_bare_root_imports_from_contracts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (root / "plane" / "__init__.py").write_text("", encoding="utf-8")
+            (models / "leak.py").write_text(
+                "import plane\nClient = plane.PlaneClient\n", encoding="utf-8"
+            )
+            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
+
     def test_rejects_new_generic_roots_and_tracked_outputs(self):
         errors = _MODULE.evaluate_changes(
             [("A", "helpers/new.py"), ("A", "dist/package.whl")],
@@ -113,6 +124,14 @@ class RepositoryPolicyTests(unittest.TestCase):
             lambda _path: "class Unsafe:\n    pass\n",
         )
         self.assertEqual([error[0] for error in errors], ["SDK005"])
+
+    def test_rejects_resources_outside_api_owner(self):
+        errors = _MODULE.evaluate_changes(
+            [("R", "plane/resources/projects.py")],
+            lambda _path: False,
+            lambda _path: "class Projects(BaseResource):\n    pass\n",
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK006"])
 
     def test_parses_renames(self):
         self.assertEqual(

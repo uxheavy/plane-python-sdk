@@ -118,6 +118,8 @@ def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
                 )
                 if imports_package(imports, name)
             }
+            if "plane" in imports:
+                forbidden.add("plane")
             if forbidden:
                 names = ", ".join(sorted(forbidden))
                 errors.append(
@@ -147,15 +149,33 @@ def evaluate_changes(
                 errors.append(
                     ("SDK004", path, f"tracked build output directory {output} is forbidden")
                 )
-        if (
-            path.startswith("plane/api/")
-            and path.endswith(".py")
-            and Path(path).name not in {"__init__.py", "base_resource.py"}
-        ):
+        if path.startswith("plane/") and path.endswith(".py"):
             source = read_file(path)
             if source is None:
                 continue
             classes = [node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)]
+            resources = [
+                node.name
+                for node in classes
+                if any(
+                    (isinstance(base, ast.Name) and base.id == "BaseResource")
+                    or (isinstance(base, ast.Attribute) and base.attr == "BaseResource")
+                    for base in node.bases
+                )
+            ]
+            if resources and not path.startswith("plane/api/"):
+                errors.append(
+                    (
+                        "SDK006",
+                        path,
+                        f"BaseResource subclass must live under plane/api: {', '.join(resources)}",
+                    )
+                )
+            if not path.startswith("plane/api/") or Path(path).name in {
+                "__init__.py",
+                "base_resource.py",
+            }:
+                continue
             invalid = [
                 node.name
                 for node in classes
