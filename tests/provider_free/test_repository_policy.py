@@ -194,12 +194,15 @@ class RepositoryPolicyTests(unittest.TestCase):
             ),
             "plane/contracts/work_items.py": (
                 "import pydantic\nfrom pydantic import BaseModel\n"
+                "from plane.models.projects import CreateProject\n"
                 "class WorkItemRequest(BaseModel):\n    pass\n"
                 "class WorkItemResponse(pydantic.BaseModel):\n    pass\n"
+                "class SpecialRequest(CreateProject):\n    pass\n"
             ),
             "plane/contracts/faults.py": "class SDKError(Exception):\n    pass\n",
+            "plane/facade.py": "from .client import PlaneClient\n",
             "plane/composition/custom.py": (
-                "from plane import PlaneClient\nclass CustomClient(PlaneClient):\n    pass\n"
+                "from plane.facade import PlaneClient\nclass CustomClient(PlaneClient):\n    pass\n"
             ),
         }
         errors = _MODULE.evaluate_changes(
@@ -225,7 +228,17 @@ class RepositoryPolicyTests(unittest.TestCase):
                 "direct = requests.get\nqualified = boundary.requests.get\n",
                 encoding="utf-8",
             )
-            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK001")
+            session_resource = root / "plane" / "api" / "states.py"
+            session_resource.write_text(
+                "from .base_resource import BaseResource\n"
+                "class States(BaseResource):\n"
+                "    def list(self):\n        return self.session.get('/states')\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                [error[0] for error in _MODULE.evaluate_tree(root)],
+                ["SDK001", "SDK001"],
+            )
 
     def test_parses_renames(self):
         self.assertEqual(

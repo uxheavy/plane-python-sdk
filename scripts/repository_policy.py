@@ -199,6 +199,10 @@ def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
                 for target in boundary_targets
                 if any(name == target or name.startswith(f"{target}.") for name in referenced)
             )
+            if any(
+                name == "self.session" or name.startswith("self.session.") for name in referenced
+            ):
+                leaked_transport.add("self.session")
         if leaked_transport and relative not in TRANSPORT_ALLOWLIST:
             names = ", ".join(sorted(leaked_transport))
             errors.append(
@@ -267,7 +271,9 @@ def evaluate_changes(
             dto_classes = matching_classes(
                 classes,
                 bindings,
-                lambda name: name in {"BaseModel", "pydantic.BaseModel"},
+                lambda name: (
+                    name in {"BaseModel", "pydantic.BaseModel"} or name.startswith("plane.models.")
+                ),
             )
             if (
                 dto_classes
@@ -295,7 +301,11 @@ def evaluate_changes(
             client_classes = matching_classes(
                 classes,
                 bindings,
-                lambda name: name == "PlaneClient" or name.startswith("plane.client."),
+                lambda name: (
+                    name == "PlaneClient"
+                    or name.endswith(".PlaneClient")
+                    or name.startswith("plane.client.")
+                ),
             )
             if client_classes and not path.startswith("plane/client/"):
                 names = ", ".join(sorted(client_classes))
