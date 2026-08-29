@@ -49,20 +49,23 @@ def parse_name_status(raw: bytes) -> list[tuple[str, str]]:
     return changes
 
 
+def import_from_module(node: ast.ImportFrom, package: str = "") -> str:
+    if not node.level:
+        return node.module or ""
+    parts = package.split(".") if package else []
+    parts = parts[: max(0, len(parts) - node.level + 1)]
+    if node.module:
+        parts.extend(node.module.split("."))
+    return ".".join(parts)
+
+
 def imported_modules(source: str, package: str = "") -> set[str]:
     modules: set[str] = set()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             modules.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            if node.level:
-                parts = package.split(".") if package else []
-                parts = parts[: max(0, len(parts) - node.level + 1)]
-                if node.module:
-                    parts.extend(node.module.split("."))
-                module = ".".join(parts)
-            else:
-                module = node.module or ""
+            module = import_from_module(node, package)
             if module:
                 modules.add(module)
                 modules.update(f"{module}.{alias.name}" for alias in node.names)
@@ -73,6 +76,27 @@ def imported_modules(source: str, package: str = "") -> set[str]:
 
 def imports_package(modules: set[str], package: str) -> bool:
     return any(module == package or module.startswith(f"{package}.") for module in modules)
+
+
+def base_resource_aliases(source: str, package: str) -> set[str]:
+    aliases = {"BaseResource"}
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if import_from_module(node, package) != "plane.api.base_resource":
+            continue
+        aliases.update(
+            alias.asname or alias.name for alias in node.names if alias.name == "BaseResource"
+        )
+    return aliases
+
+
+def inherits_base_resource(node: ast.ClassDef, aliases: set[str]) -> bool:
+    return any(
+        (isinstance(base, ast.Name) and base.id in aliases)
+        or (isinstance(base, ast.Attribute) and base.attr == "BaseResource")
+        for base in node.bases
+    )
 
 
 def implementation_reexports(root: Path) -> set[str]:
@@ -154,14 +178,10 @@ def evaluate_changes(
             if source is None:
                 continue
             classes = [node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)]
+            package = ".".join(Path(path).parent.parts)
+            resource_aliases = base_resource_aliases(source, package)
             resources = [
-                node.name
-                for node in classes
-                if any(
-                    (isinstance(base, ast.Name) and base.id == "BaseResource")
-                    or (isinstance(base, ast.Attribute) and base.attr == "BaseResource")
-                    for base in node.bases
-                )
+                node.name for node in classes if inherits_base_resource(node, resource_aliases)
             ]
             if resources and not path.startswith("plane/api/"):
                 errors.append(
@@ -180,11 +200,7 @@ def evaluate_changes(
                 node.name
                 for node in classes
                 if not node.name.startswith("_")
-                and not any(
-                    (isinstance(base, ast.Name) and base.id == "BaseResource")
-                    or (isinstance(base, ast.Attribute) and base.attr == "BaseResource")
-                    for base in node.bases
-                )
+                and not inherits_base_resource(node, resource_aliases)
             ]
             if invalid:
                 errors.append(

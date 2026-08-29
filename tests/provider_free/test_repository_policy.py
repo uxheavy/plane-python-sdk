@@ -133,6 +133,24 @@ class RepositoryPolicyTests(unittest.TestCase):
         )
         self.assertEqual([error[0] for error in errors], ["SDK006"])
 
+    def test_resolves_base_resource_aliases(self):
+        source = (
+            "from plane.api.base_resource import BaseResource as Resource\n"
+            "class Projects(Resource):\n    pass\n"
+        )
+        self.assertEqual(
+            _MODULE.evaluate_changes(
+                [("A", "plane/api/projects.py")], lambda _path: False, lambda _path: source
+            ),
+            [],
+        )
+        errors = _MODULE.evaluate_changes(
+            [("A", "plane/resources/projects.py")],
+            lambda _path: False,
+            lambda _path: source,
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK006"])
+
     def test_parses_renames(self):
         self.assertEqual(
             _MODULE.parse_name_status(b"R100\0old.py\0plane/api/new.py\0"),
