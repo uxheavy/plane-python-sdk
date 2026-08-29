@@ -17,6 +17,6 @@ jobs:
         with:
           python-version: "3.10"
       - name: Test copyright codemod
-        run: python -m unittest tests.unit.test_copyright_headers
+        run: python -m unittest tests.provider_free.test_copyright_headers
       - name: Check copyright and license
         run: python scripts/copyright_headers.py --check --changed-from "origin/${{ github.base_ref }}"
