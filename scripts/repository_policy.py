@@ -78,46 +78,71 @@ def imports_package(modules: set[str], package: str) -> bool:
     return any(module == package or module.startswith(f"{package}.") for module in modules)
 
 
-def base_resource_aliases(source: str, package: str) -> set[str]:
+def resource_base_aliases(source: str, package: str) -> set[str]:
     aliases = {"BaseResource"}
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.ImportFrom):
             continue
-        if import_from_module(node, package) != "plane.api.base_resource":
-            continue
-        aliases.update(
-            alias.asname or alias.name for alias in node.names if alias.name == "BaseResource"
-        )
+        module = import_from_module(node, package)
+        if module == "plane.api.base_resource":
+            aliases.update(
+                alias.asname or alias.name for alias in node.names if alias.name == "BaseResource"
+            )
+        elif module == "plane.api" or module.startswith("plane.api."):
+            aliases.update(alias.asname or alias.name for alias in node.names)
     return aliases
 
 
-def inherits_base_resource(node: ast.ClassDef, aliases: set[str]) -> bool:
-    return any(
-        (isinstance(base, ast.Name) and base.id in aliases)
-        or (isinstance(base, ast.Attribute) and base.attr == "BaseResource")
-        for base in node.bases
-    )
+def resource_classes(classes: list[ast.ClassDef], aliases: set[str]) -> set[str]:
+    resources: set[str] = set()
+    while True:
+        found = {
+            node.name
+            for node in classes
+            if any(
+                (isinstance(base, ast.Name) and base.id in aliases | resources)
+                or (isinstance(base, ast.Attribute) and base.attr == "BaseResource")
+                for base in node.bases
+            )
+        }
+        if found == resources:
+            return resources
+        resources = found
 
 
-def implementation_reexports(root: Path) -> set[str]:
-    init = root / "plane" / "__init__.py"
-    if not init.is_file():
-        return set()
-    source = init.read_text(encoding="utf-8")
-    exports: set[str] = set()
-    for node in ast.parse(source).body:
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        modules = imported_modules(ast.unparse(node), "plane")
-        if not any(imports_package(modules, owner) for owner in ("plane.api", "plane.client")):
-            continue
-        exports.update(f"plane.{alias.asname or alias.name}" for alias in node.names)
-    return exports
+def module_name(root: Path, path: Path) -> str:
+    parts = list(path.relative_to(root).with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def implementation_modules(root: Path) -> set[str]:
+    imports_by_module: dict[str, set[str]] = {}
+    for path in sorted((root / "plane").rglob("*.py")):
+        module = module_name(root, path)
+        package = module if path.name == "__init__.py" else module.rpartition(".")[0]
+        imports_by_module[module] = imported_modules(path.read_text(encoding="utf-8"), package)
+
+    implementation = {"plane.api", "plane.client"} | {
+        module for module in imports_by_module if module.startswith(("plane.api.", "plane.client."))
+    }
+    while True:
+        found = {
+            module
+            for module, imports in imports_by_module.items()
+            if module != "plane"
+            and any(imports_package(imports, owner) for owner in implementation)
+        }
+        expanded = implementation | found
+        if expanded == implementation:
+            return implementation
+        implementation = expanded
 
 
 def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
-    root_implementation_exports = implementation_reexports(root)
+    implementation = implementation_modules(root)
     for path in sorted((root / "plane").rglob("*.py")):
         relative = path.relative_to(root).as_posix()
         package = ".".join(path.relative_to(root).parent.parts)
@@ -131,17 +156,7 @@ def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
             )
 
         if relative.startswith(("plane/models/", "plane/errors/")):
-            forbidden = {
-                name
-                for name in (
-                    "api",
-                    "client",
-                    "plane.api",
-                    "plane.client",
-                    *root_implementation_exports,
-                )
-                if imports_package(imports, name)
-            }
+            forbidden = {owner for owner in implementation if imports_package(imports, owner)}
             if "plane" in imports:
                 forbidden.add("plane")
             if forbidden:
@@ -164,9 +179,10 @@ def evaluate_changes(
         added = status in {"A", "R"}
         parts = Path(path).parts
         if added:
-            if parts and parts[0] in GENERIC_ROOTS and not base_has_path(parts[0]):
+            root_name = Path(parts[0]).stem if len(parts) == 1 else parts[0]
+            if parts and root_name in GENERIC_ROOTS and not base_has_path(parts[0]):
                 errors.append(
-                    ("SDK003", path, f"new generic root {parts[0]} needs a concrete owner")
+                    ("SDK003", path, f"new generic root {root_name} needs a concrete owner")
                 )
             output = next((part for part in parts if part in TRACKED_OUTPUTS), None)
             if output:
@@ -179,10 +195,7 @@ def evaluate_changes(
                 continue
             classes = [node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)]
             package = ".".join(Path(path).parent.parts)
-            resource_aliases = base_resource_aliases(source, package)
-            resources = [
-                node.name for node in classes if inherits_base_resource(node, resource_aliases)
-            ]
+            resources = resource_classes(classes, resource_base_aliases(source, package))
             if resources and not path.startswith("plane/api/"):
                 errors.append(
                     (
@@ -199,8 +212,7 @@ def evaluate_changes(
             invalid = [
                 node.name
                 for node in classes
-                if not node.name.startswith("_")
-                and not inherits_base_resource(node, resource_aliases)
+                if not node.name.startswith("_") and node.name not in resources
             ]
             if invalid:
                 errors.append(

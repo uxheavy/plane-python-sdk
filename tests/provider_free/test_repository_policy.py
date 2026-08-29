@@ -87,6 +87,20 @@ class RepositoryPolicyTests(unittest.TestCase):
             )
             self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
 
+    def test_rejects_implementation_imports_through_facades(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (root / "plane" / "__init__.py").write_text("", encoding="utf-8")
+            (root / "plane" / "facade.py").write_text(
+                "from .client import PlaneClient\n", encoding="utf-8"
+            )
+            (models / "leak.py").write_text(
+                "from plane.facade import PlaneClient\n", encoding="utf-8"
+            )
+            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
+
     def test_rejects_bare_root_imports_from_contracts(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -100,10 +114,14 @@ class RepositoryPolicyTests(unittest.TestCase):
 
     def test_rejects_new_generic_roots_and_tracked_outputs(self):
         errors = _MODULE.evaluate_changes(
-            [("A", "helpers/new.py"), ("A", "dist/package.whl")],
+            [
+                ("A", "helpers/new.py"),
+                ("A", "utils.py"),
+                ("A", "dist/package.whl"),
+            ],
             lambda _path: False,
         )
-        self.assertEqual([error[0] for error in errors], ["SDK003", "SDK004"])
+        self.assertEqual([error[0] for error in errors], ["SDK003", "SDK003", "SDK004"])
 
     def test_grandfathers_existing_generic_roots(self):
         self.assertEqual(
@@ -143,6 +161,17 @@ class RepositoryPolicyTests(unittest.TestCase):
                 [("A", "plane/api/projects.py")], lambda _path: False, lambda _path: source
             ),
             [],
+        )
+        errors = _MODULE.evaluate_changes(
+            [("A", "plane/resources/projects.py")],
+            lambda _path: False,
+            lambda _path: source,
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK006"])
+
+    def test_rejects_indirect_resource_subclasses_outside_api(self):
+        source = (
+            "from plane.api.projects import Projects\nclass CustomProjects(Projects):\n    pass\n"
         )
         errors = _MODULE.evaluate_changes(
             [("A", "plane/resources/projects.py")],
