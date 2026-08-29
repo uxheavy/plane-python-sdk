@@ -194,6 +194,13 @@ class RepositoryPolicyTests(unittest.TestCase):
                 "import plane.api.projects as resources\n"
                 "class QualifiedProjects(resources.Projects):\n    pass\n"
             ),
+            "plane/resources/facade.py": (
+                "from plane.facade import Resource\nclass FacadeProjects(Resource):\n    pass\n"
+            ),
+            "plane/api/override.py": (
+                "class Projects(BaseResource):\n"
+                "    def _handle_response(self, response):\n        return response\n"
+            ),
             "plane/contracts/work_items.py": (
                 "import pydantic\nfrom pydantic import BaseModel, RootModel\n"
                 "from plane.models.projects import CreateProject\n"
@@ -202,8 +209,16 @@ class RepositoryPolicyTests(unittest.TestCase):
                 "class SpecialRequest(CreateProject):\n    pass\n"
                 "class IdList(RootModel[list[str]]):\n    pass\n"
             ),
+            "plane/client/oauth_client.py": (
+                "from pydantic import BaseModel\n"
+                "class OAuthToken(BaseModel):\n    pass\n"
+                "class WorkItemResponse(BaseModel):\n    pass\n"
+            ),
             "plane/contracts/faults.py": "class SDKError(Exception):\n    pass\n",
-            "plane/facade.py": "from .client import OAuthClient, PlaneClient\n",
+            "plane/facade.py": (
+                "from .api.projects import Projects as Resource\n"
+                "from .client import OAuthClient, PlaneClient\n"
+            ),
             "plane/composition/custom.py": (
                 "from plane.facade import OAuthClient, PlaneClient\n"
                 "class CustomClient(PlaneClient):\n    pass\n"
@@ -217,7 +232,16 @@ class RepositoryPolicyTests(unittest.TestCase):
         )
         self.assertEqual(
             [error[0] for error in errors],
-            ["SDK006", "SDK006", "SDK007", "SDK008", "SDK009"],
+            [
+                "SDK006",
+                "SDK006",
+                "SDK006",
+                "SDK010",
+                "SDK007",
+                "SDK007",
+                "SDK008",
+                "SDK009",
+            ],
         )
 
         with tempfile.TemporaryDirectory() as directory:

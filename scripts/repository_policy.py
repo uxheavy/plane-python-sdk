@@ -30,6 +30,14 @@ TRANSPORT_ALLOWLIST = {
     "plane/api/work_items/attachments.py",
     "plane/client/oauth_client.py",
 }
+TRANSPORT_HELPERS = {"_build_url", "_handle_response", "_headers"}
+OAUTH_MODEL_EXCEPTIONS = {
+    "OAuthAuthorizationParams",
+    "OAuthClientCredentialsParams",
+    "OAuthRefreshTokenParams",
+    "OAuthToken",
+    "OAuthTokenExchangeParams",
+}
 BUILTIN_EXCEPTIONS = {
     name
     for name, value in vars(builtins).items()
@@ -120,20 +128,30 @@ def qualified_name(
     return ""
 
 
+def resolve_export(name: str, exports: dict[str, str]) -> str:
+    seen: set[str] = set()
+    while name in exports and name not in seen:
+        seen.add(name)
+        name = exports[name]
+    return name
+
+
 def matching_classes(
     classes: list[ast.ClassDef],
     bindings: dict[str, str],
     matches: Callable[[str], bool],
     root_exports: dict[str, str] | None = None,
+    exports: dict[str, str] | None = None,
 ) -> set[str]:
     matched: set[str] = set()
+    exports = exports or {}
     while True:
         found = {
             node.name
             for node in classes
             if any(
-                matches(qualified_name(base, bindings, root_exports))
-                or qualified_name(base, bindings, root_exports) in matched
+                matches(resolve_export(qualified_name(base, bindings, root_exports), exports))
+                or resolve_export(qualified_name(base, bindings, root_exports), exports) in matched
                 for base in node.bases
             )
         }
@@ -147,6 +165,36 @@ def module_name(root: Path, path: Path) -> str:
     if parts[-1] == "__init__":
         parts.pop()
     return ".".join(parts)
+
+
+def changed_exports(
+    changes: list[tuple[str, str]],
+    read_file: Callable[[str], str | None],
+    root_exports: dict[str, str],
+) -> dict[str, str]:
+    exports: dict[str, str] = {}
+    for status, path in changes:
+        if (
+            status not in {"A", "M", "R"}
+            or not path.startswith("plane/")
+            or not path.endswith(".py")
+        ):
+            continue
+        source = read_file(path)
+        if source is None:
+            continue
+        parts = list(Path(path).with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        module = ".".join(parts)
+        package = module if path.endswith("/__init__.py") else module.rpartition(".")[0]
+        exports.update(
+            {
+                f"{module}.{local}": target
+                for local, target in import_bindings(source, package, root_exports).items()
+            }
+        )
+    return {name: resolve_export(target, exports) for name, target in exports.items()}
 
 
 def implementation_modules(root: Path) -> set[str]:
@@ -238,6 +286,7 @@ def evaluate_changes(
 ) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
     root_exports = import_bindings(read_file("plane/__init__.py") or "", "plane")
+    exports = changed_exports(changes, read_file, root_exports)
     for status, path in changes:
         if status not in {"A", "M", "R"}:
             continue
@@ -270,6 +319,7 @@ def evaluate_changes(
                     or name.startswith("plane.api.")
                 ),
                 root_exports,
+                exports,
             )
             if resources and not path.startswith("plane/api/"):
                 errors.append(
@@ -287,13 +337,13 @@ def evaluate_changes(
                     or name.startswith("plane.models.")
                 ),
                 root_exports,
+                exports,
             )
-            if (
-                dto_classes
-                and not path.startswith("plane/models/")
-                and path != "plane/client/oauth_client.py"
-            ):
-                names = ", ".join(sorted(dto_classes))
+            misplaced_dtos = set() if path.startswith("plane/models/") else dto_classes
+            if path == "plane/client/oauth_client.py":
+                misplaced_dtos -= OAUTH_MODEL_EXCEPTIONS
+            if misplaced_dtos:
+                names = ", ".join(sorted(misplaced_dtos))
                 errors.append(
                     (
                         "SDK007",
@@ -306,6 +356,7 @@ def evaluate_changes(
                 bindings,
                 lambda name: name in BUILTIN_EXCEPTIONS or name.startswith("plane.errors."),
                 root_exports,
+                exports,
             )
             if exception_classes and not path.startswith("plane/errors/"):
                 names = ", ".join(sorted(exception_classes))
@@ -321,10 +372,28 @@ def evaluate_changes(
                     or name.startswith("plane.client.")
                 ),
                 root_exports,
+                exports,
             )
             if client_classes and not path.startswith("plane/client/"):
                 names = ", ".join(sorted(client_classes))
                 errors.append(("SDK009", path, f"SDK client must live under plane/client: {names}"))
+            helper_overrides = {
+                member.name
+                for node in classes
+                if node.name in resources
+                for member in node.body
+                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and member.name in TRANSPORT_HELPERS
+            }
+            if helper_overrides and path != "plane/api/base_resource.py":
+                names = ", ".join(sorted(helper_overrides))
+                errors.append(
+                    (
+                        "SDK010",
+                        path,
+                        f"transport helper override must stay in BaseResource: {names}",
+                    )
+                )
             if not path.startswith("plane/api/") or Path(path).name in {
                 "__init__.py",
                 "base_resource.py",
