@@ -40,23 +40,28 @@ def parse_name_status(raw: bytes) -> list[tuple[str, str]]:
     return changes
 
 
-def imported_roots(source: str) -> set[str]:
-    roots: set[str] = set()
+def imported_modules(source: str) -> set[str]:
+    modules: set[str] = set()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
-            roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+            modules.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
-            roots.add(node.module.split(".", 1)[0])
-    return roots
+            modules.add(node.module)
+            modules.update(f"{node.module}.{alias.name}" for alias in node.names)
+    return modules
+
+
+def imports_package(modules: set[str], package: str) -> bool:
+    return any(module == package or module.startswith(f"{package}.") for module in modules)
 
 
 def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
     for path in sorted((root / "plane").rglob("*.py")):
         relative = path.relative_to(root).as_posix()
-        imports = imported_roots(path.read_text(encoding="utf-8"))
+        imports = imported_modules(path.read_text(encoding="utf-8"))
 
-        leaked_transport = imports & TRANSPORT_IMPORTS
+        leaked_transport = {name for name in TRANSPORT_IMPORTS if imports_package(imports, name)}
         if leaked_transport and relative not in TRANSPORT_ALLOWLIST:
             names = ", ".join(sorted(leaked_transport))
             errors.append(
@@ -64,7 +69,11 @@ def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
             )
 
         if relative.startswith(("plane/models/", "plane/errors/")):
-            forbidden = imports & {"api", "client"}
+            forbidden = {
+                name
+                for name in ("api", "client", "plane.api", "plane.client")
+                if imports_package(imports, name)
+            }
             if forbidden:
                 names = ", ".join(sorted(forbidden))
                 errors.append(
@@ -74,7 +83,9 @@ def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
 
 
 def evaluate_changes(
-    changes: list[tuple[str, str]], base_has_path: Callable[[str], bool]
+    changes: list[tuple[str, str]],
+    base_has_path: Callable[[str], bool],
+    read_file: Callable[[str], str | None] = lambda _path: None,
 ) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
     for status, path in changes:
@@ -86,6 +97,33 @@ def evaluate_changes(
         output = next((part for part in parts if part in TRACKED_OUTPUTS), None)
         if output:
             errors.append(("SDK004", path, f"tracked build output directory {output} is forbidden"))
+        if (
+            path.startswith("plane/api/")
+            and path.endswith(".py")
+            and Path(path).name not in {"__init__.py", "base_resource.py"}
+        ):
+            source = read_file(path)
+            if source is None:
+                continue
+            classes = [node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)]
+            invalid = [
+                node.name
+                for node in classes
+                if not node.name.startswith("_")
+                and not any(
+                    (isinstance(base, ast.Name) and base.id == "BaseResource")
+                    or (isinstance(base, ast.Attribute) and base.attr == "BaseResource")
+                    for base in node.bases
+                )
+            ]
+            if invalid:
+                errors.append(
+                    (
+                        "SDK005",
+                        path,
+                        f"API resource must inherit BaseResource: {', '.join(invalid)}",
+                    )
+                )
     return errors
 
 
@@ -109,7 +147,13 @@ def main() -> int:
             == 0
         )
 
-    errors = [*evaluate_tree(Path.cwd()), *evaluate_changes(changes, base_has_path)]
+    root = Path.cwd()
+
+    def read_file(path: str) -> str | None:
+        target = root / path
+        return target.read_text(encoding="utf-8") if target.is_file() else None
+
+    errors = [*evaluate_tree(root), *evaluate_changes(changes, base_has_path, read_file)]
     for rule, path, message in errors:
         print(f"{path}: {rule} {message}")
     if errors:
