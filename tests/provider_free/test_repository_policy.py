@@ -62,6 +62,31 @@ class RepositoryPolicyTests(unittest.TestCase):
             (models / "leak.py").write_text("from .. import client\n", encoding="utf-8")
             self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
 
+    def test_accepts_sibling_relative_contract_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (root / "plane" / "__init__.py").write_text("", encoding="utf-8")
+            (models / "contract.py").write_text(
+                "from . import client\nfrom .client import Response\n", encoding="utf-8"
+            )
+            self.assertEqual(_MODULE.evaluate_tree(root), [])
+
+    def test_rejects_root_implementation_reexports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (root / "plane" / "__init__.py").write_text(
+                "from .client import PlaneClient\nfrom .api.work_items import WorkItems\n",
+                encoding="utf-8",
+            )
+            (models / "leak.py").write_text(
+                "from plane import PlaneClient, WorkItems\n", encoding="utf-8"
+            )
+            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
+
     def test_rejects_new_generic_roots_and_tracked_outputs(self):
         errors = _MODULE.evaluate_changes(
             [("A", "helpers/new.py"), ("A", "dist/package.whl")],

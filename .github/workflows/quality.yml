@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.10"
       - name: Test policy rules
-        run: python -m unittest tests.unit.test_repository_policy
+        run: python -m unittest tests.provider_free.test_repository_policy
       - name: Check repository boundaries
         run: python scripts/repository_policy.py --base "$BASE_SHA"
 
@@ -51,9 +51,9 @@ jobs:
       - name: Check changed SDK and policy types
         run: |
           python -m mypy scripts/repository_policy.py
-          git diff --diff-filter=ACMR --name-only -z "$BASE_SHA"...HEAD -- 'plane/**/*.py' | xargs -0 -r python -m mypy
+          git diff --diff-filter=ACMR --name-only -z "$BASE_SHA"...HEAD -- ':(glob)plane/**/*.py' | xargs -0 -r python -m mypy
       - name: Run provider-free contracts
-        run: python -m pytest
+        run: python -m pytest tests/provider_free
       - name: Build distributions
         run: python -m build
 

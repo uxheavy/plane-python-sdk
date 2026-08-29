@@ -6,7 +6,7 @@ This file governs the Plane Python SDK repository.
 
 ## Canonical Commands
 
-- `python -m pytest` — provider-free unit tests.
+- `python -m pytest tests/provider_free` — provider-free unit tests.
 - `python -m ruff check <changed.py...>` — changed-file lint and import checks.
 - `python -m ruff format --check <changed.py...>` — changed-file formatting check.
 - `python -m mypy scripts/repository_policy.py` — policy checker type check.
@@ -22,7 +22,7 @@ This file governs the Plane Python SDK repository.
 | HTTP, retry, URL, and response behavior | `plane/api/base_resource.py` |
 | Request and response DTOs | `plane/models/` |
 | SDK exceptions | `plane/errors/` |
-| Provider-free contracts | `tests/unit/` |
+| Provider-free contracts | `tests/provider_free/` |
 | Opt-in live workflows | `tests/scripts/` |
 | Full-repository lint/type debt | CI baselines; ratchet changed files without claiming the baseline is clean |
 

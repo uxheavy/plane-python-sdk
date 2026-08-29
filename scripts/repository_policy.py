@@ -49,15 +49,23 @@ def parse_name_status(raw: bytes) -> list[tuple[str, str]]:
     return changes
 
 
-def imported_modules(source: str) -> set[str]:
+def imported_modules(source: str, package: str = "") -> set[str]:
     modules: set[str] = set()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             modules.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                modules.add(node.module)
-                modules.update(f"{node.module}.{alias.name}" for alias in node.names)
+            if node.level:
+                parts = package.split(".") if package else []
+                parts = parts[: max(0, len(parts) - node.level + 1)]
+                if node.module:
+                    parts.extend(node.module.split("."))
+                module = ".".join(parts)
+            else:
+                module = node.module or ""
+            if module:
+                modules.add(module)
+                modules.update(f"{module}.{alias.name}" for alias in node.names)
             else:
                 modules.update(alias.name for alias in node.names)
     return modules
@@ -67,11 +75,29 @@ def imports_package(modules: set[str], package: str) -> bool:
     return any(module == package or module.startswith(f"{package}.") for module in modules)
 
 
+def implementation_reexports(root: Path) -> set[str]:
+    init = root / "plane" / "__init__.py"
+    if not init.is_file():
+        return set()
+    source = init.read_text(encoding="utf-8")
+    exports: set[str] = set()
+    for node in ast.parse(source).body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        modules = imported_modules(ast.unparse(node), "plane")
+        if not any(imports_package(modules, owner) for owner in ("plane.api", "plane.client")):
+            continue
+        exports.update(f"plane.{alias.asname or alias.name}" for alias in node.names)
+    return exports
+
+
 def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
+    root_implementation_exports = implementation_reexports(root)
     for path in sorted((root / "plane").rglob("*.py")):
         relative = path.relative_to(root).as_posix()
-        imports = imported_modules(path.read_text(encoding="utf-8"))
+        package = ".".join(path.relative_to(root).parent.parts)
+        imports = imported_modules(path.read_text(encoding="utf-8"), package)
 
         leaked_transport = {name for name in TRANSPORT_IMPORTS if imports_package(imports, name)}
         if leaked_transport and relative not in TRANSPORT_ALLOWLIST:
@@ -83,7 +109,13 @@ def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
         if relative.startswith(("plane/models/", "plane/errors/")):
             forbidden = {
                 name
-                for name in ("api", "client", "plane.api", "plane.client")
+                for name in (
+                    "api",
+                    "client",
+                    "plane.api",
+                    "plane.client",
+                    *root_implementation_exports,
+                )
                 if imports_package(imports, name)
             }
             if forbidden:
