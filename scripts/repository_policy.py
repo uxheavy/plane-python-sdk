@@ -45,9 +45,12 @@ def imported_modules(source: str) -> set[str]:
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             modules.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            modules.add(node.module)
-            modules.update(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                modules.add(node.module)
+                modules.update(f"{node.module}.{alias.name}" for alias in node.names)
+            else:
+                modules.update(alias.name for alias in node.names)
     return modules
 
 
@@ -89,14 +92,20 @@ def evaluate_changes(
 ) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
     for status, path in changes:
-        if status not in {"A", "R"}:
+        if status not in {"A", "M", "R"}:
             continue
+        added = status in {"A", "R"}
         parts = Path(path).parts
-        if parts and parts[0] in GENERIC_ROOTS and not base_has_path(parts[0]):
-            errors.append(("SDK003", path, f"new generic root {parts[0]} needs a concrete owner"))
-        output = next((part for part in parts if part in TRACKED_OUTPUTS), None)
-        if output:
-            errors.append(("SDK004", path, f"tracked build output directory {output} is forbidden"))
+        if added:
+            if parts and parts[0] in GENERIC_ROOTS and not base_has_path(parts[0]):
+                errors.append(
+                    ("SDK003", path, f"new generic root {parts[0]} needs a concrete owner")
+                )
+            output = next((part for part in parts if part in TRACKED_OUTPUTS), None)
+            if output:
+                errors.append(
+                    ("SDK004", path, f"tracked build output directory {output} is forbidden")
+                )
         if (
             path.startswith("plane/api/")
             and path.endswith(".py")

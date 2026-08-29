@@ -43,6 +43,14 @@ class RepositoryPolicyTests(unittest.TestCase):
             )
             self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
 
+    def test_rejects_parent_only_relative_implementation_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (models / "leak.py").write_text("from .. import client\n", encoding="utf-8")
+            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
+
     def test_rejects_new_generic_roots_and_tracked_outputs(self):
         errors = _MODULE.evaluate_changes(
             [("A", "helpers/new.py"), ("A", "dist/package.whl")],
@@ -60,6 +68,12 @@ class RepositoryPolicyTests(unittest.TestCase):
         errors = _MODULE.evaluate_changes(
             [("A", "plane/api/unsafe.py")],
             lambda _path: False,
+            lambda _path: "class Unsafe:\n    pass\n",
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK005"])
+        errors = _MODULE.evaluate_changes(
+            [("M", "plane/api/unsafe.py")],
+            lambda _path: True,
             lambda _path: "class Unsafe:\n    pass\n",
         )
         self.assertEqual([error[0] for error in errors], ["SDK005"])
