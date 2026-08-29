@@ -182,12 +182,24 @@ class RepositoryPolicyTests(unittest.TestCase):
 
     def test_rejects_current_review_bypasses(self):
         files = {
-            "plane/__init__.py": "from .api.projects import Projects\n",
+            "plane/__init__.py": (
+                "from .api.projects import Projects\nfrom .client import PlaneClient\n"
+            ),
             "plane/resources/projects.py": (
                 "from plane import Projects\nclass CustomProjects(Projects):\n    pass\n"
             ),
+            "plane/resources/qualified.py": (
+                "import plane.api.projects as resources\n"
+                "class QualifiedProjects(resources.Projects):\n    pass\n"
+            ),
             "plane/contracts/work_items.py": (
-                "from pydantic import BaseModel\nclass WorkItemResponse(BaseModel):\n    pass\n"
+                "import pydantic\nfrom pydantic import BaseModel\n"
+                "class WorkItemRequest(BaseModel):\n    pass\n"
+                "class WorkItemResponse(pydantic.BaseModel):\n    pass\n"
+            ),
+            "plane/contracts/faults.py": "class SDKError(Exception):\n    pass\n",
+            "plane/composition/custom.py": (
+                "from plane import PlaneClient\nclass CustomClient(PlaneClient):\n    pass\n"
             ),
         }
         errors = _MODULE.evaluate_changes(
@@ -195,7 +207,10 @@ class RepositoryPolicyTests(unittest.TestCase):
             lambda _path: False,
             files.get,
         )
-        self.assertEqual([error[0] for error in errors], ["SDK006", "SDK007"])
+        self.assertEqual(
+            [error[0] for error in errors],
+            ["SDK006", "SDK006", "SDK007", "SDK008", "SDK009"],
+        )
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -205,7 +220,9 @@ class RepositoryPolicyTests(unittest.TestCase):
             resource = root / "plane" / "api" / "projects.py"
             resource.write_text(
                 "from plane.api.base_resource import BaseResource, requests\n"
-                "class Projects(BaseResource):\n    pass\n",
+                "import plane.api.base_resource as boundary\n"
+                "class Projects(BaseResource):\n    pass\n"
+                "direct = requests.get\nqualified = boundary.requests.get\n",
                 encoding="utf-8",
             )
             self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK001")

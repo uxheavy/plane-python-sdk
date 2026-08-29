@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -28,6 +29,11 @@ TRANSPORT_ALLOWLIST = {
     "plane/api/base_resource.py",
     "plane/api/work_items/attachments.py",
     "plane/client/oauth_client.py",
+}
+BUILTIN_EXCEPTIONS = {
+    name
+    for name, value in vars(builtins).items()
+    if isinstance(value, type) and issubclass(value, BaseException)
 }
 
 
@@ -78,61 +84,52 @@ def imports_package(modules: set[str], package: str) -> bool:
     return any(module == package or module.startswith(f"{package}.") for module in modules)
 
 
-def root_resource_exports(source: str) -> set[str]:
-    exports: set[str] = set()
-    for node in ast.parse(source).body:
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        module = import_from_module(node, "plane")
-        if module == "plane.api" or module.startswith("plane.api."):
-            exports.update(alias.asname or alias.name for alias in node.names)
-    return exports
-
-
-def resource_base_aliases(source: str, package: str, root_resources: set[str]) -> set[str]:
-    aliases = {"BaseResource"}
+def import_bindings(
+    source: str, package: str, root_exports: dict[str, str] | None = None
+) -> dict[str, str]:
+    bindings: dict[str, str] = {}
     for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        module = import_from_module(node, package)
-        if module == "plane.api.base_resource":
-            aliases.update(
-                alias.asname or alias.name for alias in node.names if alias.name == "BaseResource"
-            )
-        elif module == "plane.api" or module.startswith("plane.api."):
-            aliases.update(alias.asname or alias.name for alias in node.names)
-        elif module == "plane":
-            aliases.update(
-                alias.asname or alias.name for alias in node.names if alias.name in root_resources
-            )
-    return aliases
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local = alias.asname or alias.name.split(".")[0]
+                bindings[local] = alias.name if alias.asname else local
+        elif isinstance(node, ast.ImportFrom):
+            module = import_from_module(node, package)
+            for alias in node.names:
+                target = f"{module}.{alias.name}" if module else alias.name
+                if module == "plane" and root_exports:
+                    target = root_exports.get(alias.name, target)
+                bindings[alias.asname or alias.name] = target
+    return bindings
 
 
-def base_model_aliases(source: str, package: str) -> set[str]:
-    aliases = {"BaseModel"}
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.ImportFrom) and import_from_module(node, package) == "pydantic":
-            aliases.update(
-                alias.asname or alias.name for alias in node.names if alias.name == "BaseModel"
-            )
-    return aliases
+def qualified_name(node: ast.expr, bindings: dict[str, str]) -> str:
+    if isinstance(node, ast.Name):
+        return bindings.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        parent = qualified_name(node.value, bindings)
+        return f"{parent}.{node.attr}" if parent else node.attr
+    return ""
 
 
-def resource_classes(classes: list[ast.ClassDef], aliases: set[str]) -> set[str]:
-    resources: set[str] = set()
+def matching_classes(
+    classes: list[ast.ClassDef],
+    bindings: dict[str, str],
+    matches: Callable[[str], bool],
+) -> set[str]:
+    matched: set[str] = set()
     while True:
         found = {
             node.name
             for node in classes
             if any(
-                (isinstance(base, ast.Name) and base.id in aliases | resources)
-                or (isinstance(base, ast.Attribute) and base.attr == "BaseResource")
+                matches(qualified_name(base, bindings)) or qualified_name(base, bindings) in matched
                 for base in node.bases
             )
         }
-        if found == resources:
-            return resources
-        resources = found
+        if found == matched:
+            return matched
+        matched = found
 
 
 def module_name(root: Path, path: Path) -> str:
@@ -165,58 +162,43 @@ def implementation_modules(root: Path) -> set[str]:
         implementation = expanded
 
 
-def transport_bindings(root: Path) -> dict[str, set[str]]:
-    bindings: dict[str, set[str]] = {}
+def transport_targets(root: Path) -> set[str]:
+    targets: set[str] = set()
     for relative in TRANSPORT_ALLOWLIST:
         path = root / relative
         if not path.is_file():
             continue
         module = module_name(root, path)
-        names: set[str] = set()
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.Import):
-                names.update(
-                    alias.asname or alias.name.split(".")[0]
-                    for alias in node.names
-                    if any(
-                        imports_package({alias.name}, transport) for transport in TRANSPORT_IMPORTS
-                    )
-                )
-            elif isinstance(node, ast.ImportFrom):
-                imported = node.module or ""
-                names.update(
-                    alias.asname or alias.name
-                    for alias in node.names
-                    if any(
-                        imports_package({f"{imported}.{alias.name}"}, transport)
-                        for transport in TRANSPORT_IMPORTS
-                    )
-                )
-        bindings[module] = names
-    return bindings
+        package = module.rpartition(".")[0]
+        for local, target in import_bindings(path.read_text(encoding="utf-8"), package).items():
+            if any(imports_package({target}, transport) for transport in TRANSPORT_IMPORTS):
+                targets.add(f"{module}.{local}")
+    return targets
 
 
 def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
     implementation = implementation_modules(root)
-    boundary_bindings = transport_bindings(root)
+    boundary_targets = transport_targets(root)
     for path in sorted((root / "plane").rglob("*.py")):
         relative = path.relative_to(root).as_posix()
         package = ".".join(path.relative_to(root).parent.parts)
         source = path.read_text(encoding="utf-8")
         imports = imported_modules(source, package)
+        bindings = import_bindings(source, package)
 
         leaked_transport = {name for name in TRANSPORT_IMPORTS if imports_package(imports, name)}
         if relative not in TRANSPORT_ALLOWLIST:
-            for node in ast.walk(ast.parse(source)):
-                if not isinstance(node, ast.ImportFrom):
-                    continue
-                module = import_from_module(node, package)
-                leaked_transport.update(
-                    f"{module}.{alias.name}"
-                    for alias in node.names
-                    if alias.name in boundary_bindings.get(module, set())
-                )
+            referenced = {
+                qualified_name(node, bindings)
+                for node in ast.walk(ast.parse(source))
+                if isinstance(node, (ast.Name, ast.Attribute))
+            }
+            leaked_transport.update(
+                target
+                for target in boundary_targets
+                if any(name == target or name.startswith(f"{target}.") for name in referenced)
+            )
         if leaked_transport and relative not in TRANSPORT_ALLOWLIST:
             names = ", ".join(sorted(leaked_transport))
             errors.append(
@@ -241,7 +223,7 @@ def evaluate_changes(
     read_file: Callable[[str], str | None] = lambda _path: None,
 ) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
-    root_resources = root_resource_exports(read_file("plane/__init__.py") or "")
+    root_exports = import_bindings(read_file("plane/__init__.py") or "", "plane")
     for status, path in changes:
         if status not in {"A", "M", "R"}:
             continue
@@ -264,8 +246,15 @@ def evaluate_changes(
                 continue
             classes = [node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)]
             package = ".".join(Path(path).parent.parts)
-            resources = resource_classes(
-                classes, resource_base_aliases(source, package, root_resources)
+            bindings = import_bindings(source, package, root_exports)
+            resources = matching_classes(
+                classes,
+                bindings,
+                lambda name: (
+                    name == "BaseResource"
+                    or name == "plane.api.base_resource.BaseResource"
+                    or name.startswith("plane.api.")
+                ),
             )
             if resources and not path.startswith("plane/api/"):
                 errors.append(
@@ -275,7 +264,11 @@ def evaluate_changes(
                         f"BaseResource subclass must live under plane/api: {', '.join(resources)}",
                     )
                 )
-            dto_classes = resource_classes(classes, base_model_aliases(source, package))
+            dto_classes = matching_classes(
+                classes,
+                bindings,
+                lambda name: name in {"BaseModel", "pydantic.BaseModel"},
+            )
             if (
                 dto_classes
                 and not path.startswith("plane/models/")
@@ -289,6 +282,24 @@ def evaluate_changes(
                         f"Pydantic DTO must live under plane/models: {names}",
                     )
                 )
+            exception_classes = matching_classes(
+                classes,
+                bindings,
+                lambda name: name in BUILTIN_EXCEPTIONS or name.startswith("plane.errors."),
+            )
+            if exception_classes and not path.startswith("plane/errors/"):
+                names = ", ".join(sorted(exception_classes))
+                errors.append(
+                    ("SDK008", path, f"SDK exception must live under plane/errors: {names}")
+                )
+            client_classes = matching_classes(
+                classes,
+                bindings,
+                lambda name: name == "PlaneClient" or name.startswith("plane.client."),
+            )
+            if client_classes and not path.startswith("plane/client/"):
+                names = ", ".join(sorted(client_classes))
+                errors.append(("SDK009", path, f"SDK client must live under plane/client: {names}"))
             if not path.startswith("plane/api/") or Path(path).name in {
                 "__init__.py",
                 "base_resource.py",
