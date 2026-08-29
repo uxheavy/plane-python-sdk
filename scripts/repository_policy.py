@@ -103,12 +103,20 @@ def import_bindings(
     return bindings
 
 
-def qualified_name(node: ast.expr, bindings: dict[str, str]) -> str:
+def qualified_name(
+    node: ast.expr,
+    bindings: dict[str, str],
+    root_exports: dict[str, str] | None = None,
+) -> str:
     if isinstance(node, ast.Name):
         return bindings.get(node.id, node.id)
     if isinstance(node, ast.Attribute):
-        parent = qualified_name(node.value, bindings)
+        parent = qualified_name(node.value, bindings, root_exports)
+        if parent == "plane" and root_exports:
+            return root_exports.get(node.attr, f"plane.{node.attr}")
         return f"{parent}.{node.attr}" if parent else node.attr
+    if isinstance(node, ast.Subscript):
+        return qualified_name(node.value, bindings, root_exports)
     return ""
 
 
@@ -116,6 +124,7 @@ def matching_classes(
     classes: list[ast.ClassDef],
     bindings: dict[str, str],
     matches: Callable[[str], bool],
+    root_exports: dict[str, str] | None = None,
 ) -> set[str]:
     matched: set[str] = set()
     while True:
@@ -123,7 +132,8 @@ def matching_classes(
             node.name
             for node in classes
             if any(
-                matches(qualified_name(base, bindings)) or qualified_name(base, bindings) in matched
+                matches(qualified_name(base, bindings, root_exports))
+                or qualified_name(base, bindings, root_exports) in matched
                 for base in node.bases
             )
         }
@@ -259,6 +269,7 @@ def evaluate_changes(
                     or name == "plane.api.base_resource.BaseResource"
                     or name.startswith("plane.api.")
                 ),
+                root_exports,
             )
             if resources and not path.startswith("plane/api/"):
                 errors.append(
@@ -272,8 +283,10 @@ def evaluate_changes(
                 classes,
                 bindings,
                 lambda name: (
-                    name in {"BaseModel", "pydantic.BaseModel"} or name.startswith("plane.models.")
+                    name in {"BaseModel", "RootModel", "pydantic.BaseModel", "pydantic.RootModel"}
+                    or name.startswith("plane.models.")
                 ),
+                root_exports,
             )
             if (
                 dto_classes
@@ -292,6 +305,7 @@ def evaluate_changes(
                 classes,
                 bindings,
                 lambda name: name in BUILTIN_EXCEPTIONS or name.startswith("plane.errors."),
+                root_exports,
             )
             if exception_classes and not path.startswith("plane/errors/"):
                 names = ", ".join(sorted(exception_classes))
@@ -302,10 +316,11 @@ def evaluate_changes(
                 classes,
                 bindings,
                 lambda name: (
-                    name == "PlaneClient"
-                    or name.endswith(".PlaneClient")
+                    name in {"PlaneClient", "OAuthClient"}
+                    or name.endswith((".PlaneClient", ".OAuthClient"))
                     or name.startswith("plane.client.")
                 ),
+                root_exports,
             )
             if client_classes and not path.startswith("plane/client/"):
                 names = ", ".join(sorted(client_classes))

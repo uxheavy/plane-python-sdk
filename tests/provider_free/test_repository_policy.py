@@ -183,26 +183,31 @@ class RepositoryPolicyTests(unittest.TestCase):
     def test_rejects_current_review_bypasses(self):
         files = {
             "plane/__init__.py": (
-                "from .api.projects import Projects\nfrom .client import PlaneClient\n"
+                "from .api.projects import Projects\nfrom .client import OAuthClient, PlaneClient\n"
             ),
             "plane/resources/projects.py": (
-                "from plane import Projects\nclass CustomProjects(Projects):\n    pass\n"
+                "from plane import Projects\nimport plane as sdk\n"
+                "class CustomProjects(Projects):\n    pass\n"
+                "class RootAliasProjects(sdk.Projects):\n    pass\n"
             ),
             "plane/resources/qualified.py": (
                 "import plane.api.projects as resources\n"
                 "class QualifiedProjects(resources.Projects):\n    pass\n"
             ),
             "plane/contracts/work_items.py": (
-                "import pydantic\nfrom pydantic import BaseModel\n"
+                "import pydantic\nfrom pydantic import BaseModel, RootModel\n"
                 "from plane.models.projects import CreateProject\n"
                 "class WorkItemRequest(BaseModel):\n    pass\n"
                 "class WorkItemResponse(pydantic.BaseModel):\n    pass\n"
                 "class SpecialRequest(CreateProject):\n    pass\n"
+                "class IdList(RootModel[list[str]]):\n    pass\n"
             ),
             "plane/contracts/faults.py": "class SDKError(Exception):\n    pass\n",
-            "plane/facade.py": "from .client import PlaneClient\n",
+            "plane/facade.py": "from .client import OAuthClient, PlaneClient\n",
             "plane/composition/custom.py": (
-                "from plane.facade import PlaneClient\nclass CustomClient(PlaneClient):\n    pass\n"
+                "from plane.facade import OAuthClient, PlaneClient\n"
+                "class CustomClient(PlaneClient):\n    pass\n"
+                "class CustomOAuthClient(OAuthClient):\n    pass\n"
             ),
         }
         errors = _MODULE.evaluate_changes(
