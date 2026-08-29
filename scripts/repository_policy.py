@@ -14,7 +14,16 @@ from pathlib import Path
 
 GENERIC_ROOTS = {"common", "helpers", "shared", "utils"}
 TRACKED_OUTPUTS = {".mypy_cache", ".pytest_cache", ".ruff_cache", "build", "dist", "htmlcov"}
-TRANSPORT_IMPORTS = {"requests", "urllib3"}
+TRANSPORT_IMPORTS = {
+    "aiohttp",
+    "http.client",
+    "httplib2",
+    "httpcore",
+    "httpx",
+    "requests",
+    "urllib.request",
+    "urllib3",
+}
 TRANSPORT_ALLOWLIST = {
     "plane/api/base_resource.py",
     "plane/api/work_items/attachments.py",

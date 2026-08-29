@@ -18,12 +18,23 @@ _SPEC.loader.exec_module(_MODULE)
 
 class RepositoryPolicyTests(unittest.TestCase):
     def test_rejects_transport_import_outside_allowlist(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            path = root / "plane" / "models" / "leak.py"
-            path.parent.mkdir(parents=True)
-            path.write_text("import requests\n", encoding="utf-8")
-            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK001")
+        transports = (
+            "import aiohttp\n",
+            "from http import client\n",
+            "import httplib2\n",
+            "import httpcore\n",
+            "import httpx\n",
+            "import requests\n",
+            "from urllib import request\n",
+            "import urllib3\n",
+        )
+        for source in transports:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = root / "plane" / "models" / "leak.py"
+                path.parent.mkdir(parents=True)
+                path.write_text(source, encoding="utf-8")
+                self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK001")
 
     def test_accepts_transport_import_at_registered_boundary(self):
         with tempfile.TemporaryDirectory() as directory:

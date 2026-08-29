@@ -48,10 +48,12 @@ jobs:
         run: |
           git diff --diff-filter=ACMR --name-only -z "$BASE_SHA"...HEAD -- '*.py' | xargs -0 -r python -m ruff check
           git diff --diff-filter=ACMR --name-only -z "$BASE_SHA"...HEAD -- '*.py' | xargs -0 -r python -m ruff format --check
-      - name: Check policy types
-        run: python -m mypy scripts/repository_policy.py
+      - name: Check changed SDK and policy types
+        run: |
+          python -m mypy scripts/repository_policy.py
+          git diff --diff-filter=ACMR --name-only -z "$BASE_SHA"...HEAD -- 'plane/**/*.py' | xargs -0 -r python -m mypy
       - name: Run provider-free contracts
-        run: python -m pytest tests/unit/test_base_resource.py tests/unit/test_errors.py tests/unit/test_repository_policy.py tests/unit/test_copyright_headers.py
+        run: python -m pytest
       - name: Build distributions
         run: python -m build
 
