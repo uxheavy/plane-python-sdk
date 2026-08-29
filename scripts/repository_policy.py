@@ -78,7 +78,18 @@ def imports_package(modules: set[str], package: str) -> bool:
     return any(module == package or module.startswith(f"{package}.") for module in modules)
 
 
-def resource_base_aliases(source: str, package: str) -> set[str]:
+def root_resource_exports(source: str) -> set[str]:
+    exports: set[str] = set()
+    for node in ast.parse(source).body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        module = import_from_module(node, "plane")
+        if module == "plane.api" or module.startswith("plane.api."):
+            exports.update(alias.asname or alias.name for alias in node.names)
+    return exports
+
+
+def resource_base_aliases(source: str, package: str, root_resources: set[str]) -> set[str]:
     aliases = {"BaseResource"}
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.ImportFrom):
@@ -90,6 +101,20 @@ def resource_base_aliases(source: str, package: str) -> set[str]:
             )
         elif module == "plane.api" or module.startswith("plane.api."):
             aliases.update(alias.asname or alias.name for alias in node.names)
+        elif module == "plane":
+            aliases.update(
+                alias.asname or alias.name for alias in node.names if alias.name in root_resources
+            )
+    return aliases
+
+
+def base_model_aliases(source: str, package: str) -> set[str]:
+    aliases = {"BaseModel"}
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and import_from_module(node, package) == "pydantic":
+            aliases.update(
+                alias.asname or alias.name for alias in node.names if alias.name == "BaseModel"
+            )
     return aliases
 
 
@@ -140,15 +165,58 @@ def implementation_modules(root: Path) -> set[str]:
         implementation = expanded
 
 
+def transport_bindings(root: Path) -> dict[str, set[str]]:
+    bindings: dict[str, set[str]] = {}
+    for relative in TRANSPORT_ALLOWLIST:
+        path = root / relative
+        if not path.is_file():
+            continue
+        module = module_name(root, path)
+        names: set[str] = set()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                names.update(
+                    alias.asname or alias.name.split(".")[0]
+                    for alias in node.names
+                    if any(
+                        imports_package({alias.name}, transport) for transport in TRANSPORT_IMPORTS
+                    )
+                )
+            elif isinstance(node, ast.ImportFrom):
+                imported = node.module or ""
+                names.update(
+                    alias.asname or alias.name
+                    for alias in node.names
+                    if any(
+                        imports_package({f"{imported}.{alias.name}"}, transport)
+                        for transport in TRANSPORT_IMPORTS
+                    )
+                )
+        bindings[module] = names
+    return bindings
+
+
 def evaluate_tree(root: Path) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
     implementation = implementation_modules(root)
+    boundary_bindings = transport_bindings(root)
     for path in sorted((root / "plane").rglob("*.py")):
         relative = path.relative_to(root).as_posix()
         package = ".".join(path.relative_to(root).parent.parts)
-        imports = imported_modules(path.read_text(encoding="utf-8"), package)
+        source = path.read_text(encoding="utf-8")
+        imports = imported_modules(source, package)
 
         leaked_transport = {name for name in TRANSPORT_IMPORTS if imports_package(imports, name)}
+        if relative not in TRANSPORT_ALLOWLIST:
+            for node in ast.walk(ast.parse(source)):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                module = import_from_module(node, package)
+                leaked_transport.update(
+                    f"{module}.{alias.name}"
+                    for alias in node.names
+                    if alias.name in boundary_bindings.get(module, set())
+                )
         if leaked_transport and relative not in TRANSPORT_ALLOWLIST:
             names = ", ".join(sorted(leaked_transport))
             errors.append(
@@ -173,6 +241,7 @@ def evaluate_changes(
     read_file: Callable[[str], str | None] = lambda _path: None,
 ) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
+    root_resources = root_resource_exports(read_file("plane/__init__.py") or "")
     for status, path in changes:
         if status not in {"A", "M", "R"}:
             continue
@@ -195,13 +264,29 @@ def evaluate_changes(
                 continue
             classes = [node for node in ast.parse(source).body if isinstance(node, ast.ClassDef)]
             package = ".".join(Path(path).parent.parts)
-            resources = resource_classes(classes, resource_base_aliases(source, package))
+            resources = resource_classes(
+                classes, resource_base_aliases(source, package, root_resources)
+            )
             if resources and not path.startswith("plane/api/"):
                 errors.append(
                     (
                         "SDK006",
                         path,
                         f"BaseResource subclass must live under plane/api: {', '.join(resources)}",
+                    )
+                )
+            dto_classes = resource_classes(classes, base_model_aliases(source, package))
+            if (
+                dto_classes
+                and not path.startswith("plane/models/")
+                and path != "plane/client/oauth_client.py"
+            ):
+                names = ", ".join(sorted(dto_classes))
+                errors.append(
+                    (
+                        "SDK007",
+                        path,
+                        f"Pydantic DTO must live under plane/models: {names}",
                     )
                 )
             if not path.startswith("plane/api/") or Path(path).name in {

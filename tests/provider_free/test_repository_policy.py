@@ -180,6 +180,36 @@ class RepositoryPolicyTests(unittest.TestCase):
         )
         self.assertEqual([error[0] for error in errors], ["SDK006"])
 
+    def test_rejects_current_review_bypasses(self):
+        files = {
+            "plane/__init__.py": "from .api.projects import Projects\n",
+            "plane/resources/projects.py": (
+                "from plane import Projects\nclass CustomProjects(Projects):\n    pass\n"
+            ),
+            "plane/contracts/work_items.py": (
+                "from pydantic import BaseModel\nclass WorkItemResponse(BaseModel):\n    pass\n"
+            ),
+        }
+        errors = _MODULE.evaluate_changes(
+            [("A", path) for path in files if path != "plane/__init__.py"],
+            lambda _path: False,
+            files.get,
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK006", "SDK007"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            boundary = root / "plane" / "api" / "base_resource.py"
+            boundary.parent.mkdir(parents=True)
+            boundary.write_text("import requests\n", encoding="utf-8")
+            resource = root / "plane" / "api" / "projects.py"
+            resource.write_text(
+                "from plane.api.base_resource import BaseResource, requests\n"
+                "class Projects(BaseResource):\n    pass\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK001")
+
     def test_parses_renames(self):
         self.assertEqual(
             _MODULE.parse_name_status(b"R100\0old.py\0plane/api/new.py\0"),
