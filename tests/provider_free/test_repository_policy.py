@@ -203,11 +203,16 @@ class RepositoryPolicyTests(unittest.TestCase):
             ),
             "plane/contracts/work_items.py": (
                 "import pydantic\nfrom pydantic import BaseModel, RootModel\n"
+                "from pydantic.v1 import BaseModel as V1BaseModel\n"
                 "from plane.models.projects import CreateProject\n"
+                "def local_binding():\n"
+                "    from email.message import Message as BaseModel\n"
+                "    return BaseModel\n"
                 "class WorkItemRequest(BaseModel):\n    pass\n"
                 "class WorkItemResponse(pydantic.BaseModel):\n    pass\n"
                 "class SpecialRequest(CreateProject):\n    pass\n"
                 "class IdList(RootModel[list[str]]):\n    pass\n"
+                "class V1Request(V1BaseModel):\n    pass\n"
             ),
             "plane/client/oauth_client.py": (
                 "from pydantic import BaseModel\n"
@@ -221,14 +226,16 @@ class RepositoryPolicyTests(unittest.TestCase):
             ),
             "plane/composition/custom.py": (
                 "from plane.facade import OAuthClient, PlaneClient\n"
+                "class PlaneClient:\n    pass\n"
                 "class CustomClient(PlaneClient):\n    pass\n"
                 "class CustomOAuthClient(OAuthClient):\n    pass\n"
             ),
         }
         errors = _MODULE.evaluate_changes(
-            [("A", path) for path in files if path != "plane/__init__.py"],
+            [("A", path) for path in files if path not in {"plane/__init__.py", "plane/facade.py"}],
             lambda _path: False,
             files.get,
+            files,
         )
         self.assertEqual(
             [error[0] for error in errors],

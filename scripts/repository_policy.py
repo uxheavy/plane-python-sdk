@@ -10,7 +10,7 @@ import argparse
 import ast
 import builtins
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 GENERIC_ROOTS = {"common", "helpers", "shared", "utils"}
@@ -96,7 +96,7 @@ def import_bindings(
     source: str, package: str, root_exports: dict[str, str] | None = None
 ) -> dict[str, str]:
     bindings: dict[str, str] = {}
-    for node in ast.walk(ast.parse(source)):
+    for node in ast.parse(source).body:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 local = alias.asname or alias.name.split(".")[0]
@@ -167,18 +167,14 @@ def module_name(root: Path, path: Path) -> str:
     return ".".join(parts)
 
 
-def changed_exports(
-    changes: list[tuple[str, str]],
+def module_exports(
+    paths: Iterable[str],
     read_file: Callable[[str], str | None],
     root_exports: dict[str, str],
 ) -> dict[str, str]:
     exports: dict[str, str] = {}
-    for status, path in changes:
-        if (
-            status not in {"A", "M", "R"}
-            or not path.startswith("plane/")
-            or not path.endswith(".py")
-        ):
+    for path in paths:
+        if not path.startswith("plane/") or not path.endswith(".py"):
             continue
         source = read_file(path)
         if source is None:
@@ -283,10 +279,13 @@ def evaluate_changes(
     changes: list[tuple[str, str]],
     base_has_path: Callable[[str], bool],
     read_file: Callable[[str], str | None] = lambda _path: None,
+    python_paths: Iterable[str] | None = None,
 ) -> list[tuple[str, str, str]]:
     errors: list[tuple[str, str, str]] = []
     root_exports = import_bindings(read_file("plane/__init__.py") or "", "plane")
-    exports = changed_exports(changes, read_file, root_exports)
+    exports = module_exports(
+        python_paths or (path for _status, path in changes), read_file, root_exports
+    )
     for status, path in changes:
         if status not in {"A", "M", "R"}:
             continue
@@ -334,6 +333,7 @@ def evaluate_changes(
                 bindings,
                 lambda name: (
                     name in {"BaseModel", "RootModel", "pydantic.BaseModel", "pydantic.RootModel"}
+                    or name in {"pydantic.v1.BaseModel", "pydantic.v1.RootModel"}
                     or name.startswith("plane.models.")
                 ),
                 root_exports,
@@ -373,6 +373,9 @@ def evaluate_changes(
                 ),
                 root_exports,
                 exports,
+            )
+            client_classes.update(
+                node.name for node in classes if node.name in {"OAuthClient", "PlaneClient"}
             )
             if client_classes and not path.startswith("plane/client/"):
                 names = ", ".join(sorted(client_classes))
@@ -441,7 +444,11 @@ def main() -> int:
         target = root / path
         return target.read_text(encoding="utf-8") if target.is_file() else None
 
-    errors = [*evaluate_tree(root), *evaluate_changes(changes, base_has_path, read_file)]
+    python_paths = [path.relative_to(root).as_posix() for path in (root / "plane").rglob("*.py")]
+    errors = [
+        *evaluate_tree(root),
+        *evaluate_changes(changes, base_has_path, read_file, python_paths),
+    ]
     for rule, path, message in errors:
         print(f"{path}: {rule} {message}")
     if errors:
