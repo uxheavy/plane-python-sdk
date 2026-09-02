@@ -178,18 +178,31 @@ class WorkItemAttachments(BaseResource):
         Returns:
             Presigned S3 URL (time-limited, typically ~1 hour)
         """
-        endpoint = f"{workspace_slug}/projects/{project_id}/work-items/{work_item_id}/attachments/{attachment_id}"
+        endpoint = (
+            f"{workspace_slug}/projects/{project_id}/work-items/"
+            f"{work_item_id}/attachments/{attachment_id}"
+        )
         special_request = getattr(self.config.gateway_transport, "request_special", None)
         if special_request is not None:
-            return special_request("attachment_download_url", self._transport_endpoint(endpoint))
+            download_url = special_request(
+                "attachment_download_url", self._transport_endpoint(endpoint)
+            )
+            if not isinstance(download_url, str):
+                raise TypeError("attachment download transport must return a URL string")
+            return download_url
         url = self._build_url(endpoint)
-        resp = self.session.get(url, headers=self._headers(), allow_redirects=False, timeout=self.config.timeout)
+        resp = self.session.get(
+            url, headers=self._headers(), allow_redirects=False, timeout=self.config.timeout
+        )
         if resp.status_code in (301, 302, 303, 307, 308):
             location = resp.headers.get("Location")
-            if location:
+            if isinstance(location, str) and location:
                 return location
         # Not a redirect — let _handle_response raise or return
-        return self._handle_response(resp)
+        download_url = self._handle_response(resp)
+        if not isinstance(download_url, str):
+            raise TypeError("attachment download endpoint must return a URL string")
+        return download_url
 
     def delete(
         self, workspace_slug: str, project_id: str, work_item_id: str, attachment_id: str

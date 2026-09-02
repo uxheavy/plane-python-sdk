@@ -32,7 +32,9 @@ def test_client_passes_the_optional_transport_to_all_resources() -> None:
         {"id": "u1", "display_name": "Ada", "email": "ada@example.com"}
     )
 
-    client = PlaneClient(base_url="https://plane.example", api_key="key", gateway_transport=transport)
+    client = PlaneClient(
+        base_url="https://plane.example", api_key="key", gateway_transport=transport
+    )
 
     user = client.users.get_me()
 
@@ -42,8 +44,10 @@ def test_client_passes_the_optional_transport_to_all_resources() -> None:
 
 
 def test_gateway_transport_receives_normalized_payload_and_query() -> None:
-    transport = RecordingTransport({"id": "p1", "name": "Project"})
-    client = PlaneClient(base_url="https://plane.example", api_key="key", gateway_transport=transport)
+    transport = RecordingTransport({"id": "p1", "name": "Project", "identifier": "PRJ"})
+    client = PlaneClient(
+        base_url="https://plane.example", api_key="key", gateway_transport=transport
+    )
 
     client.projects.retrieve("ws", "p1")
 

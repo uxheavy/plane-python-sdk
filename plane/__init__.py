@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from .api.agent_runs import AgentRuns
+from .api.base_resource import GatewayTransport
 from .api.cycles import Cycles
 from .api.estimates import Estimates
 from .api.initiatives import Initiatives
@@ -37,7 +38,6 @@ from .client import (
     PlaneClient,
 )
 from .config import Configuration
-from .api.base_resource import GatewayTransport
 from .errors.errors import ConfigurationError, HttpError, PlaneError
 from .models.project_templates import (
     CreatePageTemplate,

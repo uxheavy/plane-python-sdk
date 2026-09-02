@@ -53,7 +53,9 @@ class BaseResource:
     # HTTP methods
     def _get(self, endpoint: str, params: Mapping[str, Any] | None = None) -> Any:
         if self.config.gateway_transport is not None:
-            return self.config.gateway_transport.request("GET", self._transport_endpoint(endpoint), params=params)
+            return self.config.gateway_transport.request(
+                "GET", self._transport_endpoint(endpoint), params=params
+            )
         url = self._build_url(endpoint)
         response = self.session.get(
             url, headers=self._headers(), params=params, timeout=self.config.timeout
@@ -82,7 +84,9 @@ class BaseResource:
 
     def _put(self, endpoint: str, data: Mapping[str, Any] | None = None) -> Any:
         if self.config.gateway_transport is not None:
-            return self.config.gateway_transport.request("PUT", self._transport_endpoint(endpoint), data=data)
+            return self.config.gateway_transport.request(
+                "PUT", self._transport_endpoint(endpoint), data=data
+            )
         url = self._build_url(endpoint)
         response = self.session.put(
             url, headers=self._headers(), json=data, timeout=self.config.timeout
@@ -91,7 +95,9 @@ class BaseResource:
 
     def _patch(self, endpoint: str, data: Mapping[str, Any] | None = None) -> Any:
         if self.config.gateway_transport is not None:
-            return self.config.gateway_transport.request("PATCH", self._transport_endpoint(endpoint), data=data)
+            return self.config.gateway_transport.request(
+                "PATCH", self._transport_endpoint(endpoint), data=data
+            )
         url = self._build_url(endpoint)
         response = self.session.patch(
             url, headers=self._headers(), json=data, timeout=self.config.timeout
