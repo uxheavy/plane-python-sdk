@@ -54,6 +54,25 @@ def test_gateway_transport_receives_normalized_payload_and_query() -> None:
     assert transport.calls == [("GET", "/workspaces/ws/projects/p1", None, None)]
 
 
+def test_attachment_download_uses_gateway_transport() -> None:
+    transport = RecordingTransport("https://files.example/report.pdf")
+    client = PlaneClient(
+        base_url="https://plane.example", api_key="key", gateway_transport=transport
+    )
+
+    url = client.work_items.attachments.get_download_url("ws", "project", "item", "asset")
+
+    assert url == "https://files.example/report.pdf"
+    assert transport.calls == [
+        (
+            "GET",
+            "/workspaces/ws/projects/project/work-items/item/attachments/asset",
+            None,
+            None,
+        )
+    ]
+
+
 def test_transport_is_opt_in_and_does_not_replace_the_rest_session() -> None:
     client = PlaneClient(base_url="https://plane.example", api_key="key")
 

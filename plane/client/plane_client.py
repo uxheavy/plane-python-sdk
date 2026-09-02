@@ -32,7 +32,7 @@ from ..api.workspace_templates import WorkspaceTemplates
 from ..api.workspace_work_item_properties import WorkspaceWorkItemProperties
 from ..api.workspace_work_item_types import WorkspaceWorkItemTypes
 from ..api.workspaces import Workspaces
-from ..config import Configuration
+from ..config import Configuration, GatewayTransport
 from ..errors import ConfigurationError
 
 
@@ -43,7 +43,7 @@ class PlaneClient:
         base_url: str,
         api_key: str | None = None,
         access_token: str | None = None,
-        gateway_transport: object | None = None,
+        gateway_transport: GatewayTransport | None = None,
     ) -> None:
         if not api_key and not access_token:
             raise ConfigurationError(

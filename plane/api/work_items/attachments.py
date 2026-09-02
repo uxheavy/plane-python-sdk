@@ -182,10 +182,9 @@ class WorkItemAttachments(BaseResource):
             f"{workspace_slug}/projects/{project_id}/work-items/"
             f"{work_item_id}/attachments/{attachment_id}"
         )
-        special_request = getattr(self.config.gateway_transport, "request_special", None)
-        if special_request is not None:
-            download_url = special_request(
-                "attachment_download_url", self._transport_endpoint(endpoint)
+        if self.config.gateway_transport is not None:
+            download_url = self.config.gateway_transport.request(
+                "GET", self._transport_endpoint(endpoint)
             )
             if not isinstance(download_url, str):
                 raise TypeError("attachment download transport must return a URL string")

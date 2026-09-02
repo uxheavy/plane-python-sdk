@@ -1,11 +1,24 @@
 # Copyright (c) 2026-present Ngo Quoc Huy
 # SPDX-License-Identifier: MIT
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from .errors import ConfigurationError
+
+
+class GatewayTransport(Protocol):
+    """Optional request transport for compatibility adapters."""
+
+    def request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        data: Mapping[str, Any] | list[Any] | None = None,
+        params: Mapping[str, Any] | None = None,
+    ) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -27,7 +40,7 @@ class Configuration:
         access_token: str | None = None,
         timeout: float | tuple[float, float] | None = 30.0,
         retry: RetryConfig | None = None,
-        gateway_transport: Any | None = None,
+        gateway_transport: GatewayTransport | None = None,
     ) -> None:
         if not api_key and not access_token:
             raise ConfigurationError(

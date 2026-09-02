@@ -2,33 +2,15 @@
 # SPDX-License-Identifier: MIT
 
 from collections.abc import Mapping
-from typing import Any, Protocol
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from ..config import Configuration
+from ..config import GatewayTransport as GatewayTransport
 from ..errors.errors import HttpError
-
-
-class GatewayTransport(Protocol):
-    """Optional request transport used by compatibility adapters.
-
-    The SDK keeps its existing REST behavior unless a caller explicitly
-    supplies this transport.  A transport receives the same normalized
-    endpoint, payload, and query parameters that the REST client would send;
-    it is responsible for preserving the SDK response shape.
-    """
-
-    def request(
-        self,
-        method: str,
-        endpoint: str,
-        *,
-        data: Mapping[str, Any] | list[Any] | None = None,
-        params: Mapping[str, Any] | None = None,
-    ) -> Any: ...
 
 
 class BaseResource:
