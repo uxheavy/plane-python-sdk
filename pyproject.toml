@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "plane-sdk"
-version = "0.2.20"
+version = "0.2.21"
 description = "Python SDK for Plane API"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,7 +13,14 @@ authors = [{ name = "Plane", email = "engineering@plane.so" }]
 dependencies = ["requests>=2.31.0", "pydantic>=2.4.0"]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-dependency"]
+dev = [
+    "build==1.2.2.post1",
+    "mypy==1.15.0",
+    "pytest==9.0.2",
+    "pytest-dependency==0.6.0",
+    "ruff==0.15.10",
+    "wheel==0.45.1",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

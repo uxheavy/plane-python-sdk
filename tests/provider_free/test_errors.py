@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Ngo Quoc Huy
+# SPDX-License-Identifier: MIT
+
 """Unit tests for error classes and error-detail surfacing.
 
 These tests do NOT require network access or environment variables.
@@ -219,9 +222,7 @@ class TestHttpErrorStr:
         assert "identifier: Must be unique." in result
 
     def test_str_with_plain_text_response(self) -> None:
-        err = HttpError(
-            "HTTP 502: Bad Gateway", 502, "<!DOCTYPE html>Server Error"
-        )
+        err = HttpError("HTTP 502: Bad Gateway", 502, "<!DOCTYPE html>Server Error")
         result = str(err)
         assert "HTTP 502: Bad Gateway" in result
         assert "Server Error" in result

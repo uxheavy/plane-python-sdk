@@ -1,0 +1,72 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    name: Repository policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.10"
+      - name: Test policy rules
+        run: python -m unittest tests.provider_free.test_repository_policy
+      - name: Check repository boundaries
+        run: python scripts/repository_policy.py --base "$BASE_SHA"
+
+  quality:
+    name: Lint, types, tests, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install package and pinned development tools
+        run: python -m pip install -e ".[dev]"
+      - name: Check changed-file lint and formatting
+        run: |
+          git diff --diff-filter=ACMR --name-only -z "$BASE_SHA"...HEAD -- '*.py' | xargs -0 -r python -m ruff check
+          git diff --diff-filter=ACMR --name-only -z "$BASE_SHA"...HEAD -- '*.py' | xargs -0 -r python -m ruff format --check
+      - name: Check changed SDK and policy types
+        run: |
+          python -m mypy scripts/repository_policy.py
+          git diff --diff-filter=ACMR --name-only -z "$BASE_SHA"...HEAD -- ':(glob)plane/**/*.py' | xargs -0 -r python -m mypy --follow-imports=skip
+      - name: Run provider-free contracts
+        run: python -m pytest tests/provider_free
+      - name: Build distributions
+        run: python -m build
+
+  quality-gate:
+    name: quality-gate
+    if: always()
+    needs:
+      - policy
+      - quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every lane
+        env:
+          POLICY_RESULT: ${{ needs.policy.result }}
+          QUALITY_RESULT: ${{ needs.quality.result }}
+        run: test "$POLICY_RESULT" = success && test "$QUALITY_RESULT" = success

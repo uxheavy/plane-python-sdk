@@ -1,0 +1,290 @@
+# Copyright (c) 2026-present Ngo Quoc Huy
+# SPDX-License-Identifier: MIT
+
+from __future__ import annotations
+
+import importlib.util
+import tempfile
+import unittest
+from pathlib import Path
+
+_PATH = Path(__file__).resolve().parents[2] / "scripts" / "repository_policy.py"
+_SPEC = importlib.util.spec_from_file_location("repository_policy", _PATH)
+if _SPEC is None or _SPEC.loader is None:
+    raise ImportError("Failed to load repository_policy.py")
+_MODULE = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_MODULE)
+
+
+class RepositoryPolicyTests(unittest.TestCase):
+    def test_rejects_transport_import_outside_allowlist(self):
+        transports = (
+            "import aiohttp\n",
+            "from http import client\n",
+            "import httplib2\n",
+            "import httpcore\n",
+            "import httpx\n",
+            "import requests\n",
+            "from urllib import request\n",
+            "import urllib3\n",
+        )
+        for source in transports:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                path = root / "plane" / "models" / "leak.py"
+                path.parent.mkdir(parents=True)
+                path.write_text(source, encoding="utf-8")
+                self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK001")
+
+    def test_accepts_transport_import_at_registered_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "plane" / "api" / "base_resource.py"
+            path.parent.mkdir(parents=True)
+            path.write_text("import requests\n", encoding="utf-8")
+            self.assertEqual(_MODULE.evaluate_tree(root), [])
+
+    def test_rejects_absolute_implementation_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (models / "leak.py").write_text(
+                "from plane.api import WorkItems\nimport plane.client\n", encoding="utf-8"
+            )
+            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
+
+    def test_rejects_parent_only_relative_implementation_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (models / "leak.py").write_text("from .. import client\n", encoding="utf-8")
+            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
+
+    def test_accepts_sibling_relative_contract_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (root / "plane" / "__init__.py").write_text("", encoding="utf-8")
+            (models / "contract.py").write_text(
+                "from . import client\nfrom .client import Response\n", encoding="utf-8"
+            )
+            self.assertEqual(_MODULE.evaluate_tree(root), [])
+
+    def test_rejects_root_implementation_reexports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (root / "plane" / "__init__.py").write_text(
+                "from .client import PlaneClient\nfrom .api.work_items import WorkItems\n",
+                encoding="utf-8",
+            )
+            (models / "leak.py").write_text(
+                "from plane import PlaneClient, WorkItems\n", encoding="utf-8"
+            )
+            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
+
+    def test_rejects_implementation_imports_through_facades(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (root / "plane" / "__init__.py").write_text(
+                "from .client import PlaneClient\n", encoding="utf-8"
+            )
+            (root / "plane" / "facade.py").write_text(
+                "from plane import PlaneClient\n", encoding="utf-8"
+            )
+            (models / "leak.py").write_text(
+                "from plane.facade import PlaneClient\n", encoding="utf-8"
+            )
+            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
+
+    def test_rejects_bare_root_imports_from_contracts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            models = root / "plane" / "models"
+            models.mkdir(parents=True)
+            (root / "plane" / "__init__.py").write_text("", encoding="utf-8")
+            (models / "leak.py").write_text(
+                "import plane\nClient = plane.PlaneClient\n", encoding="utf-8"
+            )
+            self.assertEqual(_MODULE.evaluate_tree(root)[0][0], "SDK002")
+
+    def test_rejects_new_generic_roots_and_tracked_outputs(self):
+        errors = _MODULE.evaluate_changes(
+            [
+                ("A", "helpers/new.py"),
+                ("A", "utils.py"),
+                ("A", "dist/package.whl"),
+            ],
+            lambda _path: False,
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK003", "SDK003", "SDK004"])
+
+    def test_grandfathers_existing_generic_roots(self):
+        self.assertEqual(
+            _MODULE.evaluate_changes([("A", "helpers/new.py")], lambda path: path == "helpers"),
+            [],
+        )
+
+    def test_new_api_resources_inherit_base_resource(self):
+        errors = _MODULE.evaluate_changes(
+            [("A", "plane/api/unsafe.py")],
+            lambda _path: False,
+            lambda _path: "class Unsafe:\n    pass\n",
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK005"])
+        errors = _MODULE.evaluate_changes(
+            [("M", "plane/api/unsafe.py")],
+            lambda _path: True,
+            lambda _path: "class Unsafe:\n    pass\n",
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK005"])
+
+    def test_rejects_resources_outside_api_owner(self):
+        errors = _MODULE.evaluate_changes(
+            [("R", "plane/resources/projects.py")],
+            lambda _path: False,
+            lambda _path: "class Projects(BaseResource):\n    pass\n",
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK006"])
+
+    def test_resolves_base_resource_aliases(self):
+        source = (
+            "from plane.api.base_resource import BaseResource as Resource\n"
+            "class Projects(Resource):\n    pass\n"
+        )
+        self.assertEqual(
+            _MODULE.evaluate_changes(
+                [("A", "plane/api/projects.py")], lambda _path: False, lambda _path: source
+            ),
+            [],
+        )
+        errors = _MODULE.evaluate_changes(
+            [("A", "plane/resources/projects.py")],
+            lambda _path: False,
+            lambda _path: source,
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK006"])
+
+    def test_rejects_indirect_resource_subclasses_outside_api(self):
+        source = (
+            "from plane.api.projects import Projects\nclass CustomProjects(Projects):\n    pass\n"
+        )
+        errors = _MODULE.evaluate_changes(
+            [("A", "plane/resources/projects.py")],
+            lambda _path: False,
+            lambda _path: source,
+        )
+        self.assertEqual([error[0] for error in errors], ["SDK006"])
+
+    def test_rejects_current_review_bypasses(self):
+        files = {
+            "plane/__init__.py": (
+                "from .api.projects import Projects\nfrom .client import OAuthClient, PlaneClient\n"
+            ),
+            "plane/resources/projects.py": (
+                "from plane import Projects\nimport plane as sdk\n"
+                "class CustomProjects(Projects):\n    pass\n"
+                "class RootAliasProjects(sdk.Projects):\n    pass\n"
+            ),
+            "plane/resources/qualified.py": (
+                "import plane.api.projects as resources\n"
+                "class QualifiedProjects(resources.Projects):\n    pass\n"
+                "Resource = resources.Projects\n"
+                "class AssignedProjects(Resource):\n    pass\n"
+            ),
+            "plane/resources/facade.py": (
+                "from plane.facade import Resource\nclass FacadeProjects(Resource):\n    pass\n"
+            ),
+            "plane/api/override.py": (
+                "class Projects(BaseResource):\n"
+                "    def _handle_response(self, response):\n        return response\n"
+                "    def _get(self, endpoint):\n        return endpoint\n"
+            ),
+            "plane/api/__init__.py": "class Unsafe:\n    pass\n",
+            "plane/contracts/work_items.py": (
+                "import pydantic\nfrom pydantic import BaseModel, RootModel\n"
+                "from pydantic.v1 import BaseModel as V1BaseModel\n"
+                "from plane.models.projects import CreateProject\n"
+                "def local_binding():\n"
+                "    from email.message import Message as BaseModel\n"
+                "    return BaseModel\n"
+                "class WorkItemRequest(BaseModel):\n    pass\n"
+                "class WorkItemResponse(pydantic.BaseModel):\n    pass\n"
+                "class SpecialRequest(CreateProject):\n    pass\n"
+                "class IdList(RootModel[list[str]]):\n    pass\n"
+                "class V1Request(V1BaseModel):\n    pass\n"
+            ),
+            "plane/client/oauth_client.py": (
+                "from pydantic import BaseModel\n"
+                "class OAuthToken(BaseModel):\n    pass\n"
+                "class WorkItemResponse(BaseModel):\n    pass\n"
+            ),
+            "plane/contracts/faults.py": "class SDKError(Exception):\n    pass\n",
+            "plane/facade.py": (
+                "from .api.projects import Projects as Resource\n"
+                "from .client import OAuthClient, PlaneClient\n"
+            ),
+            "plane/composition/custom.py": (
+                "from plane.facade import OAuthClient, PlaneClient\n"
+                "class PlaneClient:\n    pass\n"
+                "class CustomClient(PlaneClient):\n    pass\n"
+                "class CustomOAuthClient(OAuthClient):\n    pass\n"
+            ),
+        }
+        errors = _MODULE.evaluate_changes(
+            [("A", path) for path in files if path not in {"plane/__init__.py", "plane/facade.py"}],
+            lambda _path: False,
+            files.get,
+            files,
+        )
+        self.assertEqual(
+            [error[0] for error in errors],
+            [
+                "SDK006",
+                "SDK006",
+                "SDK006",
+                "SDK010",
+                "SDK005",
+                "SDK007",
+                "SDK007",
+                "SDK008",
+                "SDK009",
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            boundary = root / "plane" / "api" / "base_resource.py"
+            boundary.parent.mkdir(parents=True)
+            boundary.write_text("import requests\n", encoding="utf-8")
+            resource = root / "plane" / "api" / "projects.py"
+            resource.write_text(
+                "from plane.api.base_resource import BaseResource, requests\n"
+                "import plane.api.base_resource as boundary\n"
+                "class Projects(BaseResource):\n    pass\n"
+                "direct = requests.get\nqualified = boundary.requests.get\n",
+                encoding="utf-8",
+            )
+            session_resource = root / "plane" / "api" / "states.py"
+            session_resource.write_text(
+                "from .base_resource import BaseResource\n"
+                "class States(BaseResource):\n"
+                "    def list(self):\n        return self.session.get('/states')\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                [error[0] for error in _MODULE.evaluate_tree(root)],
+                ["SDK001", "SDK001"],
+            )
+
+    def test_parses_renames(self):
+        self.assertEqual(
+            _MODULE.parse_name_status(b"R100\0old.py\0plane/api/new.py\0"),
+            [("R", "plane/api/new.py")],
+        )
