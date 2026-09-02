@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Ngo Quoc Huy
+# SPDX-License-Identifier: MIT
+
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any

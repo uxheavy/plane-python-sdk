@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Ngo Quoc Huy
+# SPDX-License-Identifier: MIT
+
 from .api.agent_runs import AgentRuns
 from .api.cycles import Cycles
 from .api.estimates import Estimates

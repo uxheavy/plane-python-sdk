@@ -1,3 +1,6 @@
+# Copyright (c) 2026-present Ngo Quoc Huy
+# SPDX-License-Identifier: MIT
+
 """Contract tests for the optional compatibility transport seam."""
 
 from collections.abc import Mapping
