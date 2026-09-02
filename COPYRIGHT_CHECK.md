@@ -1,19 +1,8 @@
-## Copyright and license checks
+## Copyright attribution
 
-New Python files in this fork use the `Ngo Quoc Huy` copyright header.
-Existing Plane and third-party notices must be preserved. Package metadata
-must continue to declare the MIT license.
+Pull requests run the canonical UXHeavy policy from
+`uxheavy/.github/.github/workflows/copyright.yml`.
 
-Check all rules:
-
-```bash
-python scripts/copyright_headers.py --check --changed-from origin/main
-```
-
-Apply headers to new Python files:
-
-```bash
-python scripts/copyright_headers.py --write --added-from origin/main
-```
-
-CI runs the same check through `.github/workflows/copyright-check.yml`.
+New Python source must carry the configured UXHeavy owner and SPDX license.
+Modified upstream source must retain every inherited copyright and SPDX notice.
+Repository-specific settings live in `.github/uxheavy-copyright.json`.
