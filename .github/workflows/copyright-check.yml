@@ -1,22 +1,12 @@
-name: Copyright and license check
+name: Copyright attribution
 
 on:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-      - name: Test copyright codemod
-        run: python -m unittest tests.provider_free.test_copyright_headers
-      - name: Check copyright and license
-        run: python scripts/copyright_headers.py --check --changed-from "origin/${{ github.base_ref }}"
+  policy:
+    uses: uxheavy/.github/.github/workflows/copyright.yml@9f3a583af79b3cfdda24077f2a5b8dfe08390f04
